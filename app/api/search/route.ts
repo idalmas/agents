@@ -43,8 +43,9 @@ async function runWithRetry<T>(
 
 export async function POST(req: Request) {
   try {
-    const { userId } = await req.json();
+    const { userId, query } = await req.json();
     console.log('Starting Instagram feed extraction for user:', userId);
+    console.log('Search query:', query);
 
     // Define a simple action to test Instagram access
     const action = async (page: Page) => {
@@ -179,7 +180,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ 
       success: true, 
-      posts: result
+      posts: result,
+      query: query || 'Recent Posts'
     });
 
   } catch (error: unknown) {
@@ -193,6 +195,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ 
       success: false, 
       error: err.message,
+      query: '',
       errorDetails: {
         name: err.name,
         message: err.message,

@@ -31,7 +31,9 @@ export default function Results() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: user.id }),
+          body: JSON.stringify({ 
+            userId: user.id
+          }),
         });
 
         const data = await response.json();
@@ -56,7 +58,7 @@ export default function Results() {
   return (
     <main className="min-h-screen p-8 bg-gradient-to-b from-gray-50 to-white">
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center gap-4 mb-8">
+        <div className="flex items-center gap-4 mb-4">
           <button 
             onClick={() => router.push('/')}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
@@ -64,7 +66,21 @@ export default function Results() {
           >
             <ArrowLeft className="w-6 h-6 text-gray-600" />
           </button>
-          <h1 className="text-3xl font-bold text-gray-900">Instagram Feed Results</h1>
+        </div>
+
+        {/* Header Display */}
+        <div className="mb-8 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-gray-500 mb-2">Instagram Feed</h2>
+              <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                Top Posts
+              </p>
+            </div>
+            <div className="text-sm text-gray-500">
+              {posts.length} posts found
+            </div>
+          </div>
         </div>
 
         {loading && (
@@ -87,12 +103,12 @@ export default function Results() {
               className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow"
             >
               {post.imageUrl && (
-                <div className="relative w-full h-[400px] mb-4 rounded-lg overflow-hidden">
+                <div className="relative w-full aspect-[4/5] mb-4 rounded-lg overflow-hidden max-w-2xl mx-auto">
                   <Image
                     src={post.imageUrl}
                     alt={post.caption || 'Instagram post'}
                     fill
-                    style={{ objectFit: 'cover' }}
+                    style={{ objectFit: 'contain' }}
                     className="rounded-lg"
                   />
                 </div>
