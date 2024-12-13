@@ -3,204 +3,80 @@ import { NextResponse } from "next/server";
 import type { Page } from 'playwright-core';
 
 const ANON_KEY = process.env.ANON_KEY;
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 2000; // 2 seconds
-const PAGE_TIMEOUT = 60000; // 60 seconds
-const NAVIGATION_TIMEOUT = 45000; // 45 seconds
 
 if (!ANON_KEY) {
   throw new Error('ANON_KEY environment variable is not set');
 }
 
-// Initialize SDK with required configuration
 const anon = new AnonRuntime({
   apiKey: ANON_KEY,
   environment: 'sandbox'
 });
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-async function runWithRetry<T>(
-  operation: () => Promise<T>,
-  retries: number = MAX_RETRIES
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (retries > 0 && error instanceof Error && 
-        (error.name === 'AnonBrowserEnvironmentError' || 
-         error.message.includes('fetch failed') ||
-         error.message.includes('Browser was closed') ||
-         error.message.includes('Target closed') ||
-         error.message.includes('browser has been closed'))) {
-      console.log(`Retrying operation. Attempts remaining: ${retries - 1}`);
-      await delay(RETRY_DELAY);
-      return runWithRetry(operation, retries - 1);
-    }
-    throw error;
-  }
-}
-
 export async function POST(req: Request) {
   try {
-    const { userId, query } = await req.json();
+    const { userId } = await req.json();
     console.log('Starting Instagram feed extraction for user:', userId);
-    console.log('Search query:', query);
 
-    // Define a simple action to test Instagram access
-    const action = async (page: Page) => {
-      console.log('Debug: Action function started');
-      let browser = null;
-      
-      try {
-        // Set default timeout for all operations
-        page.setDefaultTimeout(PAGE_TIMEOUT);
-        
-        // Navigate to Instagram with better error handling
-        console.log('Navigating to Instagram...');
-        await page.goto('https://www.instagram.com/', {
-          waitUntil: 'networkidle',
-          timeout: NAVIGATION_TIMEOUT
-        }).catch(async (error) => {
-          console.log('Navigation error:', error.message);
-          // Try one more time with less strict conditions
-          await page.goto('https://www.instagram.com/', {
-            waitUntil: 'domcontentloaded',
-            timeout: NAVIGATION_TIMEOUT
-          });
-        });
-
-        // Wait for initial content load with retry
-        console.log('Waiting for initial content...');
-        await Promise.race([
-          page.waitForLoadState('domcontentloaded'),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Initial load timeout')), PAGE_TIMEOUT))
-        ]);
-        
-        // Wait for articles with retry logic
-        console.log('Waiting for feed...');
-        let articleHandle = null;
-        for (let i = 0; i < 3; i++) {
-          try {
-            articleHandle = await page.waitForSelector('article', {
-              timeout: 20000,
-              state: 'visible'
-            });
-            if (articleHandle) break;
-          } catch (e) {
-            if (i === 2) throw e;
-            console.log(`Retry ${i + 1} for article selector...`);
-            await delay(2000);
-          }
-        }
-
-        if (!articleHandle) {
-          throw new Error('No articles found on the page');
-        }
-
-        // Extract feed data with timeout protection
-        console.log('Extracting feed data...');
-        const posts = await Promise.race([
-          page.evaluate(() => {
-            const articles = document.querySelectorAll('article');
-            return Array.from(articles).slice(0, 10).map(article => {
-              // Try to find the main post image
-              const mainImage = article.querySelector('div[role="button"] img:not([alt*="profile"])') ||
-                              article.querySelector('div > div > img[style*="object-fit"]') ||
-                              article.querySelector('div[role="button"] div > img');
-
-              const imgSrc = mainImage?.getAttribute('src') || '';
-              
-              // Get the caption
-              const captionElement = 
-                article.querySelector('div > span > div > span') || // Main caption
-                article.querySelector('div > span') ||              // Simple caption
-                article.querySelector('h1');                        // Alternate caption
-              
-              const caption = captionElement?.textContent?.trim() || '';
-              
-              return {
-                caption,
-                imageUrl: imgSrc
-              };
-            });
-          }),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Feed extraction timeout')), 30000)
-          )
-        ]);
-
-        // Filter out invalid posts
-        const validPosts = posts.filter(post => 
-          post.imageUrl && !post.imageUrl.includes('profile')
-        );
-
-        console.log(`Found ${validPosts.length} valid posts`);
-        return validPosts;
-
-      } catch (error: unknown) {
-        const err = error as Error;
-        console.error('Page automation error:', err);
-        
-        // Check if error is due to browser/page closure
-        if (err.message.includes('Target closed') || 
-            err.message.includes('browser has been closed') ||
-            err.message.includes('Target page, context or browser has been closed')) {
-          throw new Error('Browser was closed - will retry');
-        }
-        
-        throw new Error(`Page automation failed: ${err.message}`);
-      }
-    };
-
-    // Run the action with retries
-    console.log('Debug: Initiating run with config:', {
+    const result = await anon.run({
       appUserId: userId,
-      apps: ['instagram']
-    });
+      apps: ['instagram'],
+      action: async (page: Page) => {
+        console.log('Navigating to Instagram...');
+        await page.goto('https://www.instagram.com/');
+        
+        console.log('Waiting for content to load...');
+        let attempts = 0;
+        let posts = [];
+        
+        while (attempts < 5 && posts.length === 0) {
+          try {
+            posts = await page.evaluate(() => {
+              const articles = document.querySelectorAll('article');
+              return Array.from(articles).slice(0, 10).map(article => {
+                const img = article.querySelector('img[src*="instagram"]');
+                const caption = article.querySelector('div > span')?.textContent || '';
+                const isVideo = Boolean(
+                  article.querySelector('video') ||
+                  article.querySelector('[aria-label*="Reel"]') ||
+                  article.querySelector('[aria-label*="Clip"]')
+                );
 
-    const result = await runWithRetry(async () => {
-      const run = await anon.run({
-        appUserId: userId,
-        apps: ['instagram'],
-        action,
-        logger: {
-          isEnabled: (name: string, severity: "error" | "verbose" | "info" | "warning") => true,
-          log: (name: string, severity: "error" | "verbose" | "info" | "warning", message: string) => {
-            console.log(`[${severity}] ${name}: ${message}`);
+                return {
+                  imageUrl: img?.getAttribute('src') || '',
+                  caption: caption.trim(),
+                  isVideo
+                };
+              });
+            });
+            
+            if (posts.length === 0) {
+              console.log(`Attempt ${attempts + 1}: No posts found, waiting 2 seconds...`);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch (err) {
+            console.log(`Attempt ${attempts + 1} failed, retrying...`);
           }
+          attempts++;
         }
-      });
 
-      console.log('Debug: Run initiated, waiting for result');
-      return run.result;
+        const filteredPosts = posts.filter(post => post.imageUrl && !post.isVideo);
+        console.log(`Found ${filteredPosts.length} valid photo posts after ${attempts} attempts`);
+        return filteredPosts;
+      }
     });
-
-    console.log('Debug: Result received:', result);
 
     return NextResponse.json({ 
       success: true, 
-      posts: result,
-      query: query || 'Recent Posts'
+      posts: Array.isArray(result) ? result : []
     });
 
   } catch (error: unknown) {
-    const err = error as Error;
-    console.error('Error details:', {
-      name: err.name,
-      message: err.message,
-      stack: err.stack
-    });
-
+    console.error('Error details:', error);
+    
     return NextResponse.json({ 
       success: false, 
-      error: err.message,
-      query: '',
-      errorDetails: {
-        name: err.name,
-        message: err.message,
-        stack: err.stack
-      }
+      error: error instanceof Error ? error.message : 'An unknown error occurred'
     }, { 
       status: 500
     });

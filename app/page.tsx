@@ -9,11 +9,10 @@ export default function Home() {
   const { user, isLoaded } = useUser();
   const router = useRouter();
   const [hasConnections, setHasConnections] = useState(false);
+  const [query, setQuery] = useState('');
 
-  // Check for connections on mount and when user changes
   useEffect(() => {
     if (user) {
-      // Check localStorage for Instagram connection
       const isInstagramConnected = localStorage.getItem('instagramConnected') === 'true';
       setHasConnections(isInstagramConnected);
     }
@@ -21,19 +20,16 @@ export default function Home() {
 
   const handleSearch = () => {
     if (!user) {
-      // If user is not logged in, show sign in
       document.getElementById('clerk-sign-in')?.click();
     } else if (!hasConnections) {
-      // If user is logged in but has no connections, redirect to manage integrations
       router.push('/manage-integrations');
     } else {
-      // User is logged in and has at least one connection
-      router.push('/results');
+      router.push(`/results?q=${encodeURIComponent(query)}`);
     }
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-8 bg-gradient-to-b from-gray-50 to-white">
+    <main className="flex min-h-screen flex-col items-center p-8 bg-gradient-to-b from-[#f0f2eb] to-[#e8eae3]">
       <div className="flex justify-end w-full max-w-3xl gap-4 items-center">
         {user && (
           <>
@@ -49,21 +45,21 @@ export default function Home() {
         )}
       </div>
       <div className="flex flex-col items-center justify-center flex-1 w-full max-w-3xl">
-        <h1 className="mb-2 text-4xl font-bold text-gray-900">Lembas</h1>
-        <p className="mb-8 text-lg text-gray-600 text-center">
-          Stay informed, not addicted. Get personalized summaries from your social feeds.
-        </p>
+        <h1 className="mb-8 text-4xl font-bold text-gray-900">Lembas</h1>
         
         <div className="w-full max-w-2xl">
           <div className="relative">
             <input
               type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="What would you like to know about your social feeds?"
-              className="w-full px-6 py-4 text-lg rounded-full border-2 border-gray-200 focus:border-blue-500 focus:outline-none shadow-lg"
+              className="w-full px-6 py-4 text-lg rounded-full border-2 border-gray-200 focus:border-[#6B8E23] focus:outline-none shadow-lg bg-white"
             />
             <button 
               onClick={handleSearch}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 px-6 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors"
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 px-6 py-2 bg-[#6B8E23] text-white rounded-full hover:bg-[#556B2F] transition-colors"
             >
               {!user 
                 ? "Sign In" 

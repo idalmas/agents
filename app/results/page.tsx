@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useUser } from "@clerk/nextjs";
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import Image from 'next/image';
 
@@ -11,38 +11,52 @@ interface Post {
   imageUrl: string;
 }
 
+interface QueryResponse {
+  type: 'direct' | 'analysis';
+  response: string;
+  posts: Post[];
+  toolResults?: any[];
+}
+
 export default function Results() {
   const { user } = useUser();
   const router = useRouter();
-  const [posts, setPosts] = useState<Post[]>([]);
+  const searchParams = useSearchParams();
+  const [queryResponse, setQueryResponse] = useState<QueryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState('Initializing search...');
 
   useEffect(() => {
-    const fetchPosts = async () => {
+    const fetchResults = async () => {
       if (!user) {
         router.push('/');
         return;
       }
 
+      const query = searchParams.get('q') || '';
+      setLoadingStatus('Starting search...');
+
       try {
-        const response = await fetch('/api/search', {
+        setLoadingStatus('Fetching Instagram data...');
+        const response = await fetch('/api/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ 
-            userId: user.id
-          }),
+            userId: user.id,
+            query: query
+          })
         });
 
         const data = await response.json();
 
         if (!data.success) {
-          throw new Error(data.error || 'Failed to fetch posts');
+          throw new Error(data.error || 'Failed to process query');
         }
 
-        setPosts(data.posts);
+        setQueryResponse(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong');
       } finally {
@@ -50,13 +64,13 @@ export default function Results() {
       }
     };
 
-    fetchPosts();
-  }, [user, router]);
+    fetchResults();
+  }, [user, router, searchParams]);
 
   if (!user) return null;
 
   return (
-    <main className="min-h-screen p-8 bg-gradient-to-b from-gray-50 to-white">
+    <main className="min-h-screen p-8 bg-gradient-to-b from-[#f0f2eb] to-[#e8eae3]">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center gap-4 mb-4">
           <button 
@@ -68,25 +82,27 @@ export default function Results() {
           </button>
         </div>
 
-        {/* Header Display */}
+        {/* Query and Response Display */}
         <div className="mb-8 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-medium text-gray-500 mb-2">Instagram Feed</h2>
-              <p className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Top Posts
-              </p>
-            </div>
-            <div className="text-sm text-gray-500">
-              {posts.length} posts found
-            </div>
+          <div className="mb-4">
+            <h2 className="text-sm font-medium text-gray-500 mb-2">Your Query</h2>
+            <p className="text-2xl font-bold text-gray-900">
+              {searchParams.get('q') || 'Recent Posts'}
+            </p>
           </div>
+
+          {queryResponse?.response && (
+            <div className="mt-4 p-4 bg-[#f7f8f5] rounded-lg">
+              <p className="text-gray-800">{queryResponse.response}</p>
+            </div>
+          )}
         </div>
 
         {loading && (
           <div className="flex flex-col items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-            <p className="mt-4 text-gray-600">Fetching your Instagram feed...</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#6B8E23]"></div>
+            <p className="mt-4 text-gray-600">{loadingStatus}</p>
+            <p className="mt-2 text-sm text-gray-500">Please wait while we process your request...</p>
           </div>
         )}
 
@@ -96,33 +112,35 @@ export default function Results() {
           </div>
         )}
 
-        <div className="grid gap-8">
-          {posts.map((post, index) => (
-            <div 
-              key={index}
-              className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow"
-            >
-              {post.imageUrl && (
-                <div className="relative w-full aspect-[4/5] mb-4 rounded-lg overflow-hidden max-w-2xl mx-auto">
-                  <Image
-                    src={post.imageUrl}
-                    alt={post.caption || 'Instagram post'}
-                    fill
-                    style={{ objectFit: 'contain' }}
-                    className="rounded-lg"
-                  />
-                </div>
-              )}
-              {post.caption && (
-                <p className="text-gray-700 text-lg">{post.caption}</p>
-              )}
-            </div>
-          ))}
-        </div>
+        {queryResponse?.posts && queryResponse.posts.length > 0 && (
+          <div className="grid gap-8">
+            {queryResponse.posts.map((post, index) => (
+              <div 
+                key={index}
+                className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow"
+              >
+                {post.imageUrl && (
+                  <div className="relative w-full aspect-[4/5] mb-4 rounded-lg overflow-hidden max-w-2xl mx-auto">
+                    <Image
+                      src={post.imageUrl}
+                      alt={post.caption || 'Instagram post'}
+                      fill
+                      style={{ objectFit: 'contain' }}
+                      className="rounded-lg"
+                    />
+                  </div>
+                )}
+                {post.caption && (
+                  <p className="text-gray-700 text-lg">{post.caption}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
-        {!loading && posts.length === 0 && !error && (
+        {!loading && (!queryResponse?.posts || queryResponse.posts.length === 0) && !error && (
           <div className="text-center py-12">
-            <p className="text-gray-600">No posts found in your feed.</p>
+            <p className="text-gray-600">No relevant posts found.</p>
           </div>
         )}
       </div>
