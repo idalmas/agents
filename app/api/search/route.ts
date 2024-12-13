@@ -73,28 +73,82 @@ export async function POST(req: Request) {
         // Wait for initial content load with retry
         console.log('Waiting for initial content...');
         await Promise.race([
-          page.waitForLoadState('domcontentloaded'),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Initial load timeout')), PAGE_TIMEOUT))
+          page.waitForLoadState('networkidle', { timeout: PAGE_TIMEOUT }),
+          new Promise(resolve => setTimeout(resolve, 30000))
         ]);
         
-        // Wait for articles with retry logic
+        // Wait for articles with retry logic and better error handling
         console.log('Waiting for feed...');
-        let articleHandle = null;
-        for (let i = 0; i < 3; i++) {
+        let retryCount = 0;
+        let articles = null;
+        
+        while (retryCount < 3 && !articles) {
           try {
-            articleHandle = await page.waitForSelector('article', {
+            await page.waitForSelector('article', {
               timeout: 20000,
               state: 'visible'
             });
-            if (articleHandle) break;
-          } catch (e) {
-            if (i === 2) throw e;
-            console.log(`Retry ${i + 1} for article selector...`);
-            await delay(2000);
+
+            // Extract feed data with timeout protection and better error handling
+            console.log('Extracting feed data...');
+            const posts = await page.evaluate(() => {
+              const articles = document.querySelectorAll('article');
+              if (!articles || articles.length === 0) {
+                return [];
+              }
+
+              return Array.from(articles).slice(0, 10).map(article => {
+                try {
+                  // Try to find the main post image
+                  const mainImage = article.querySelector('div[role="button"] img:not([alt*="profile"])') ||
+                                  article.querySelector('div > div > img[style*="object-fit"]') ||
+                                  article.querySelector('div[role="button"] div > img');
+
+                  const imgSrc = mainImage?.getAttribute('src') || '';
+                  
+                  // Get the caption
+                  const captionElement = 
+                    article.querySelector('div > span > div > span') || // Main caption
+                    article.querySelector('div > span') ||              // Simple caption
+                    article.querySelector('h1');                        // Alternate caption
+                  
+                  const caption = captionElement?.textContent?.trim() || '';
+                  
+                  return {
+                    caption,
+                    imageUrl: imgSrc
+                  };
+                } catch (err) {
+                  console.error('Error processing article:', err);
+                  return null;
+                }
+              }).filter(post => post !== null);
+            });
+
+            // Validate posts
+            if (!Array.isArray(posts)) {
+              throw new Error('Invalid posts data structure');
+            }
+
+            // Filter out invalid posts
+            const validPosts = posts.filter(post => 
+              post && post.imageUrl && !post.imageUrl.includes('profile')
+            );
+
+            console.log(`Found ${validPosts.length} valid posts`);
+            return validPosts;
+
+          } catch (error) {
+            console.error(`Attempt ${retryCount + 1} failed:`, error);
+            retryCount++;
+            if (retryCount === 3) {
+              throw new Error('Failed to extract posts after multiple attempts');
+            }
+            await new Promise(resolve => setTimeout(resolve, 2000));
           }
         }
 
-        if (!articleHandle) {
+        if (!articles) {
           throw new Error('No articles found on the page');
         }
 

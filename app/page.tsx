@@ -33,7 +33,7 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-8 bg-gradient-to-b from-gray-50 to-white">
+    <main className="flex min-h-screen flex-col items-center p-8 bg-[#f2f4f3]">
       <div className="flex justify-end w-full max-w-3xl gap-4 items-center">
         {user && (
           <>
@@ -50,20 +50,17 @@ export default function Home() {
       </div>
       <div className="flex flex-col items-center justify-center flex-1 w-full max-w-3xl">
         <h1 className="mb-2 text-4xl font-bold text-gray-900">Lembas</h1>
-        <p className="mb-8 text-lg text-gray-600 text-center">
-          Stay informed, not addicted. Get personalized summaries from your social feeds.
-        </p>
         
         <div className="w-full max-w-2xl">
           <div className="relative">
             <input
               type="text"
               placeholder="What would you like to know about your social feeds?"
-              className="w-full px-6 py-4 text-lg rounded-full border-2 border-gray-200 focus:border-blue-500 focus:outline-none shadow-lg"
+              className="w-full px-6 py-4 text-lg rounded-full border-2 border-emerald-600 focus:border-emerald-700 focus:outline-none shadow-lg bg-white text-emerald-900 placeholder-gray-500"
             />
             <button 
               onClick={handleSearch}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 px-6 py-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors"
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 px-6 py-2 bg-emerald-800 text-white rounded-full hover:bg-emerald-900 transition-colors shadow-md"
             >
               {!user 
                 ? "Sign In" 
