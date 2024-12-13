@@ -5,6 +5,8 @@ import type { Page } from 'playwright-core';
 const ANON_KEY = process.env.ANON_KEY;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
+const PAGE_TIMEOUT = 60000; // 60 seconds
+const NAVIGATION_TIMEOUT = 45000; // 45 seconds
 
 if (!ANON_KEY) {
   throw new Error('ANON_KEY environment variable is not set');
@@ -26,7 +28,11 @@ async function runWithRetry<T>(
     return await operation();
   } catch (error) {
     if (retries > 0 && error instanceof Error && 
-        (error.name === 'AnonBrowserEnvironmentError' || error.message.includes('fetch failed'))) {
+        (error.name === 'AnonBrowserEnvironmentError' || 
+         error.message.includes('fetch failed') ||
+         error.message.includes('Browser was closed') ||
+         error.message.includes('Target closed') ||
+         error.message.includes('browser has been closed'))) {
       console.log(`Retrying operation. Attempts remaining: ${retries - 1}`);
       await delay(RETRY_DELAY);
       return runWithRetry(operation, retries - 1);
@@ -43,60 +49,105 @@ export async function POST(req: Request) {
     // Define a simple action to test Instagram access
     const action = async (page: Page) => {
       console.log('Debug: Action function started');
+      let browser = null;
       
       try {
-        // Navigate to Instagram home with less strict waiting conditions
+        // Set default timeout for all operations
+        page.setDefaultTimeout(PAGE_TIMEOUT);
+        
+        // Navigate to Instagram with better error handling
         console.log('Navigating to Instagram...');
         await page.goto('https://www.instagram.com/', {
-          waitUntil: 'domcontentloaded',
-          timeout: 30000
-        });
-        
-        // Wait for authentication to complete
-        console.log('Waiting for authentication...');
-        await page.waitForTimeout(5000);
-
-        // Wait specifically for article elements
-        await page.waitForSelector('article', { timeout: 30000 });
-
-        // Extract feed data focusing on photos and captions
-        console.log('Extracting feed data...');
-        const posts = await page.evaluate(() => {
-          const articles = document.querySelectorAll('article');
-          return Array.from(articles).slice(0, 10).map(article => {
-            // Get the image
-            const img = article.querySelector('img[src]');
-            const imgSrc = img?.getAttribute('src') || '';
-            const altText = img?.getAttribute('alt') || '';
-            
-            // Get the caption - try different possible selectors
-            const captionElement = 
-              article.querySelector('div > span > div > span') || // Main caption
-              article.querySelector('div > span') ||              // Simple caption
-              article.querySelector('h1');                        // Alternate caption
-            
-            const caption = captionElement?.textContent?.trim() || '';
-            
-            return {
-              caption,
-              imageUrl: imgSrc,
-              altText: altText
-            };
+          waitUntil: 'networkidle',
+          timeout: NAVIGATION_TIMEOUT
+        }).catch(async (error) => {
+          console.log('Navigation error:', error.message);
+          // Try one more time with less strict conditions
+          await page.goto('https://www.instagram.com/', {
+            waitUntil: 'domcontentloaded',
+            timeout: NAVIGATION_TIMEOUT
           });
         });
 
-        console.log(`Extracted ${posts.length} posts`);
+        // Wait for initial content load with retry
+        console.log('Waiting for initial content...');
+        await Promise.race([
+          page.waitForLoadState('domcontentloaded'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Initial load timeout')), PAGE_TIMEOUT))
+        ]);
         
-        // Filter out posts without images or captions
+        // Wait for articles with retry logic
+        console.log('Waiting for feed...');
+        let articleHandle = null;
+        for (let i = 0; i < 3; i++) {
+          try {
+            articleHandle = await page.waitForSelector('article', {
+              timeout: 20000,
+              state: 'visible'
+            });
+            if (articleHandle) break;
+          } catch (e) {
+            if (i === 2) throw e;
+            console.log(`Retry ${i + 1} for article selector...`);
+            await delay(2000);
+          }
+        }
+
+        if (!articleHandle) {
+          throw new Error('No articles found on the page');
+        }
+
+        // Extract feed data with timeout protection
+        console.log('Extracting feed data...');
+        const posts = await Promise.race([
+          page.evaluate(() => {
+            const articles = document.querySelectorAll('article');
+            return Array.from(articles).slice(0, 10).map(article => {
+              // Try to find the main post image
+              const mainImage = article.querySelector('div[role="button"] img:not([alt*="profile"])') ||
+                              article.querySelector('div > div > img[style*="object-fit"]') ||
+                              article.querySelector('div[role="button"] div > img');
+
+              const imgSrc = mainImage?.getAttribute('src') || '';
+              
+              // Get the caption
+              const captionElement = 
+                article.querySelector('div > span > div > span') || // Main caption
+                article.querySelector('div > span') ||              // Simple caption
+                article.querySelector('h1');                        // Alternate caption
+              
+              const caption = captionElement?.textContent?.trim() || '';
+              
+              return {
+                caption,
+                imageUrl: imgSrc
+              };
+            });
+          }),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Feed extraction timeout')), 30000)
+          )
+        ]);
+
+        // Filter out invalid posts
         const validPosts = posts.filter(post => 
-          post.imageUrl || post.caption
+          post.imageUrl && !post.imageUrl.includes('profile')
         );
-        
+
         console.log(`Found ${validPosts.length} valid posts`);
         return validPosts;
+
       } catch (error: unknown) {
         const err = error as Error;
         console.error('Page automation error:', err);
+        
+        // Check if error is due to browser/page closure
+        if (err.message.includes('Target closed') || 
+            err.message.includes('browser has been closed') ||
+            err.message.includes('Target page, context or browser has been closed')) {
+          throw new Error('Browser was closed - will retry');
+        }
+        
         throw new Error(`Page automation failed: ${err.message}`);
       }
     };

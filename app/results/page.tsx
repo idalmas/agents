@@ -4,12 +4,11 @@ import { useEffect, useState } from 'react';
 import { useUser } from "@clerk/nextjs";
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
+import Image from 'next/image';
 
 interface Post {
-  username: string;
-  likes: string;
   caption: string;
-  timestamp: string;
+  imageUrl: string;
 }
 
 export default function Results() {
@@ -18,7 +17,6 @@ export default function Results() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [streamingUrl, setStreamingUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchPosts = async () => {
@@ -43,7 +41,6 @@ export default function Results() {
         }
 
         setPosts(data.posts);
-        setStreamingUrl(data.liveStreamingUrl);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong');
       } finally {
@@ -83,36 +80,35 @@ export default function Results() {
           </div>
         )}
 
-        {streamingUrl && (
-          <div className="mb-8">
-            <h2 className="text-xl font-semibold mb-2">Live Preview</h2>
-            <iframe
-              src={streamingUrl}
-              className="w-full h-[400px] border border-gray-200 rounded-lg"
-              title="Live Preview"
-            />
-          </div>
-        )}
-
-        <div className="grid gap-6">
+        <div className="grid gap-8">
           {posts.map((post, index) => (
             <div 
               key={index}
-              className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm"
+              className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow"
             >
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="font-semibold text-lg">{post.username}</h3>
-                <span className="text-gray-500 text-sm">
-                  {new Date(post.timestamp).toLocaleDateString()}
-                </span>
-              </div>
-              <p className="text-gray-600 mb-4">{post.caption}</p>
-              <div className="text-sm text-gray-500">
-                {post.likes} likes
-              </div>
+              {post.imageUrl && (
+                <div className="relative w-full h-[400px] mb-4 rounded-lg overflow-hidden">
+                  <Image
+                    src={post.imageUrl}
+                    alt={post.caption || 'Instagram post'}
+                    fill
+                    style={{ objectFit: 'cover' }}
+                    className="rounded-lg"
+                  />
+                </div>
+              )}
+              {post.caption && (
+                <p className="text-gray-700 text-lg">{post.caption}</p>
+              )}
             </div>
           ))}
         </div>
+
+        {!loading && posts.length === 0 && !error && (
+          <div className="text-center py-12">
+            <p className="text-gray-600">No posts found in your feed.</p>
+          </div>
+        )}
       </div>
     </main>
   );
