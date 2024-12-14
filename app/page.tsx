@@ -27,8 +27,11 @@ export default function Home() {
       // If user is logged in but has no connections, redirect to manage integrations
       router.push('/manage-integrations');
     } else {
+      // Get the input value
+      const input = document.querySelector('input') as HTMLInputElement;
+      const query = input?.value || '';
       // User is logged in and has at least one connection
-      router.push('/results');
+      router.push(`/results?q=${encodeURIComponent(query)}`);
     }
   };
 

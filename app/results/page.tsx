@@ -27,11 +27,18 @@ export default function Results() {
   const [newMessage, setNewMessage] = useState('');
 
   useEffect(() => {
+    let isSubscribed = true;
+    const controller = new AbortController();
+
     const fetchPosts = async () => {
-      if (!user) {
+      if (!user?.id) {
         router.push('/');
         return;
       }
+
+      // Get query from URL
+      const params = new URLSearchParams(window.location.search);
+      const query = params.get('q') || '';
 
       try {
         const response = await fetch('/api/search', {
@@ -40,36 +47,65 @@ export default function Results() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ 
-            userId: user.id
+            userId: user.id,
+            query
           }),
+          signal: controller.signal
         });
 
         const data = await response.json();
+        
+        if (!isSubscribed) return;
+
+        console.log('Raw response data:', data); // Debug log
 
         if (!data.success) {
           throw new Error(data.error || 'Failed to fetch posts');
         }
 
-        setPosts(data.posts);
-        // Add initial response to messages
-        setMessages([
-          { type: 'assistant', content: 'Here are the relevant posts from your Instagram feed:', posts: data.posts }
-        ]);
-      } catch (err) {
+        // Filter out posts with invalid image URLs
+        const validPosts = data.posts.filter((post: Post) => 
+          post.imageUrl && (post.imageUrl.includes('cdninstagram') || post.imageUrl.includes('fbcdn'))
+        );
+
+        console.log('Filtered valid posts:', validPosts); // Debug log
+
+        setPosts(validPosts);
+        
+        // Add initial query and response to messages
+        const initialMessages: Message[] = [
+          { type: 'user' as const, content: query || 'Show me my recent posts' },
+          { type: 'assistant' as const, content: 'Here are the relevant posts from your Instagram feed:', posts: validPosts }
+        ];
+
+        console.log('Setting messages:', initialMessages); // Debug log
+        
+        setMessages(initialMessages);
+      } catch (err: unknown) {
+        if (!isSubscribed) return;
+        if (err instanceof Error && err.name === 'AbortError') return;
         setError(err instanceof Error ? err.message : 'Something went wrong');
       } finally {
-        setLoading(false);
+        if (isSubscribed) {
+          setLoading(false);
+        }
       }
     };
 
     fetchPosts();
-  }, [user, router]);
+
+    return () => {
+      isSubscribed = false;
+      controller.abort();
+    };
+  }, [user?.id, router]);
 
   const handleSendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() || !user?.id) return;
 
     // Add user message to chat
-    setMessages(prev => [...prev, { type: 'user', content: newMessage }]);
+    const userMessage: Message = { type: 'user', content: newMessage };
+    setMessages(prev => [...prev, userMessage]);
     setNewMessage('');
     setLoading(true);
 
@@ -80,7 +116,7 @@ export default function Results() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
-          userId: user?.id,
+          userId: user.id,
           query: newMessage
         }),
       });
@@ -92,12 +128,13 @@ export default function Results() {
       }
 
       // Add assistant response to chat
-      setMessages(prev => [...prev, { 
+      const assistantMessage: Message = { 
         type: 'assistant', 
         content: 'Here are the relevant posts for your query:',
         posts: data.posts
-      }]);
-    } catch (err) {
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
       setLoading(false);

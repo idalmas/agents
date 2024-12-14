@@ -4,39 +4,136 @@ import type { Page } from 'playwright-core';
 
 const ANON_KEY = process.env.ANON_KEY;
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 2000; // 2 seconds
-const PAGE_TIMEOUT = 60000; // 60 seconds
-const NAVIGATION_TIMEOUT = 45000; // 45 seconds
+const TIMEOUT = 30000; // 30 seconds
 
 if (!ANON_KEY) {
   throw new Error('ANON_KEY environment variable is not set');
 }
 
-// Initialize SDK with required configuration
 const anon = new AnonRuntime({
   apiKey: ANON_KEY,
   environment: 'sandbox'
 });
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-async function runWithRetry<T>(
-  operation: () => Promise<T>,
-  retries: number = MAX_RETRIES
-): Promise<T> {
+async function createBrowserSession(userId: string, retryCount = 0): Promise<any> {
   try {
-    return await operation();
+    console.log(`Attempt ${retryCount + 1} to create browser session...`);
+    
+    const response = await Promise.race([
+      anon.run({
+        appUserId: userId,
+        apps: ['instagram'],
+        action: async (page: Page) => {
+          try {
+            // Enable console logging from the browser
+            page.on('console', msg => console.log('Browser:', msg.text()));
+            
+            // Set a shorter navigation timeout
+            page.setDefaultNavigationTimeout(TIMEOUT);
+            page.setDefaultTimeout(TIMEOUT);
+            
+            console.log('Starting navigation...');
+            
+            // Go to Instagram feed directly
+            await page.goto('https://www.instagram.com/feed/');
+            console.log('Initial navigation complete');
+
+            // Wait for either the feed to load or login page
+            try {
+              await Promise.race([
+                page.waitForSelector('article', { timeout: 5000 }),
+                page.waitForSelector('input[name="username"]', { timeout: 5000 })
+              ]);
+            } catch (e) {
+              console.log('Timeout waiting for initial content');
+            }
+
+            // Check if we're logged in
+            const isLoggedIn = await page.evaluate(() => {
+              return !document.querySelector('input[name="username"]');
+            });
+
+            if (!isLoggedIn) {
+              console.log('Not logged in');
+              return {
+                posts: [],
+                message: 'Please log in to Instagram to view your feed'
+              };
+            }
+
+            // Wait a bit longer for feed content
+            await page.waitForTimeout(3000);
+
+            // Simple post extraction with logging
+            const posts = await page.evaluate(() => {
+              console.log('Starting post extraction in browser');
+              
+              const selectors = ['article', 'div[role="feed"] > div', 'main article'];
+              let articles = [];
+              
+              for (const selector of selectors) {
+                const found = document.querySelectorAll(selector);
+                console.log(`Found ${found.length} elements with selector: ${selector}`);
+                articles.push(...Array.from(found));
+              }
+
+              articles = [...new Set(articles)];
+              console.log(`Found ${articles.length} unique articles`);
+
+              return articles.map(article => {
+                const images = article.querySelectorAll('img');
+                console.log(`Found ${images.length} images in article`);
+                
+                let bestImage = null;
+                for (const img of images) {
+                  const src = img.getAttribute('src') || '';
+                  console.log('Found image with src:', src);
+                  if (src && !src.includes('profile') && (src.includes('cdninstagram') || src.includes('fbcdn'))) {
+                    bestImage = img;
+                    console.log('Selected best image:', src);
+                    break;
+                  }
+                }
+
+                const caption = article.textContent;
+                const post = {
+                  caption: caption?.trim() || '',
+                  imageUrl: bestImage?.getAttribute('src') || ''
+                };
+                console.log('Created post:', post);
+                return post;
+              });
+            });
+
+            const validPosts = posts
+              .filter(post => post.imageUrl && post.imageUrl.length > 0)
+              .slice(0, 10);
+
+            return {
+              posts: validPosts,
+              message: `Found ${validPosts.length} posts in your feed`
+            };
+          } catch (error) {
+            console.error('Browser action error:', error);
+            throw error;
+          }
+        }
+      }),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Browser session timeout')), TIMEOUT)
+      )
+    ]) as { result: any };  // Type assertion to fix the type error
+
+    return response.result;
   } catch (error) {
-    if (retries > 0 && error instanceof Error && 
-        (error.name === 'AnonBrowserEnvironmentError' || 
-         error.message.includes('fetch failed') ||
-         error.message.includes('Browser was closed') ||
-         error.message.includes('Target closed') ||
-         error.message.includes('browser has been closed'))) {
-      console.log(`Retrying operation. Attempts remaining: ${retries - 1}`);
-      await delay(RETRY_DELAY);
-      return runWithRetry(operation, retries - 1);
+    console.error(`Browser session attempt ${retryCount + 1} failed:`, error);
+    
+    if (retryCount < MAX_RETRIES - 1) {
+      console.log('Retrying...');
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Exponential backoff
+      return createBrowserSession(userId, retryCount + 1);
     }
+    
     throw error;
   }
 }
@@ -44,97 +141,46 @@ async function runWithRetry<T>(
 export async function POST(req: Request) {
   try {
     const { userId, query } = await req.json();
-    console.log('Starting Instagram feed extraction for user:', userId);
-    console.log('Search query:', query);
+    console.log('Starting request for user:', userId);
+    
+    if (!userId) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'User ID is required',
+        message: 'Please provide a user ID'
+      }, { status: 400 });
+    }
 
-    // Define a simple action to test Instagram access
-    const action = async (page: Page) => {
-      console.log('Debug: Action function started');
-      
-      try {
-        // Navigate to Instagram
-        await page.goto('https://www.instagram.com/');
-        
-        // Simple wait for content
-        await page.waitForSelector('article');
+    const result = await createBrowserSession(userId);
 
-        // Extract feed data
-        const posts = await page.evaluate(() => {
-          const articles = document.querySelectorAll('article');
-          return Array.from(articles).slice(0, 10).map(article => {
-            // Try to find the main post image
-            const mainImage = article.querySelector('div[role="button"] img:not([alt*="profile"])') ||
-                            article.querySelector('div > div > img[style*="object-fit"]') ||
-                            article.querySelector('div[role="button"] div > img');
-
-            const imgSrc = mainImage?.getAttribute('src') || '';
-            
-            // Get the caption
-            const captionElement = 
-              article.querySelector('div > span > div > span') || // Main caption
-              article.querySelector('div > span') ||              // Simple caption
-              article.querySelector('h1');                        // Alternate caption
-            
-            const caption = captionElement?.textContent?.trim() || '';
-            
-            return {
-              caption,
-              imageUrl: imgSrc
-            };
-          });
-        });
-
-        // Filter out invalid posts
-        const validPosts = posts.filter(post => 
-          post.imageUrl && !post.imageUrl.includes('profile')
-        );
-
-        console.log(`Found ${validPosts.length} valid posts`);
-        return validPosts;
-
-      } catch (error) {
-        console.error('Page automation error:', error);
-        throw error;
-      }
-    };
-
-    const result = await runWithRetry(async () => {
-      const run = await anon.run({
-        appUserId: userId,
-        apps: ['instagram'],
-        action
+    if (!result?.posts?.length) {
+      console.log('No posts found in result:', result);
+      return NextResponse.json({ 
+        success: false,
+        posts: [],
+        message: result?.message || 'No posts found',
+        error: 'No posts found in feed'
       });
+    }
 
-      return run.result;
-    });
-
-    console.log('Debug: Result received:', result);
-
+    console.log(`Returning ${result.posts.length} posts`);
     return NextResponse.json({ 
       success: true, 
-      posts: result,
-      query: query || 'Recent Posts'
+      posts: result.posts,
+      message: result.message
     });
 
-  } catch (error: unknown) {
-    const err = error as Error;
-    console.error('Error details:', {
-      name: err.name,
-      message: err.message,
-      stack: err.stack
-    });
-
+  } catch (error) {
+    console.error('Request error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
     return NextResponse.json({ 
       success: false, 
-      error: err.message,
-      query: '',
-      errorDetails: {
-        name: err.name,
-        message: err.message,
-        stack: err.stack
-      }
+      posts: [],
+      error: 'Failed to fetch posts',
+      message: `There was an error fetching your Instagram feed: ${errorMessage}. Please try again.`
     }, { 
-      status: 500
+      status: 500 
     });
   }
 } 
